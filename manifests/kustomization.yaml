@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: kafka-advisor
+
+resources:
+  # Step 1 - Foundation
+  - base/00-namespace.yaml
+  - base/01-configmap-prompt.yaml
+  - base/02-secret-model.yaml
+  - base/07-rbac.yaml
+
+  # Step 2 - Model storage
+  - rhoai/04-model-pvc-and-download-job.yaml
+
+  # Step 3 - RHOAI runtime
+  - rhoai/03-serving-runtime.yaml
+
+  # Step 4 - InferenceService (uncomment after PVC is bound)
+  # - rhoai/05-inference-service.yaml
+
+  # Step 5 - Quarkus app (uncomment after InferenceService is Ready)
+  # - app/06-quarkus-app.yaml

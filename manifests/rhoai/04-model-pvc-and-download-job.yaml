@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-advisor-model-pvc
+  namespace: kafka-advisor
+  labels:
+    app.kubernetes.io/part-of: kafka-advisor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 15Gi
+  storageClassName: crc-csi-hostpath-provisioner
+

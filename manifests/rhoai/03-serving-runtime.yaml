@@ -1,0 +1,68 @@
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: kafka-advisor-vllm-runtime
+  namespace: kafka-advisor
+  labels:
+    app.kubernetes.io/part-of: kafka-advisor
+  annotations:
+    opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
+    opendatahub.io/apiProtocol: REST
+spec:
+  supportedModelFormats:
+    - name: vLLM
+      version: "1"
+      autoSelect: true
+  multiModel: false
+  containers:
+    - name: kserve-container
+      image: registry.redhat.io/rhoai/odh-vllm-cuda-rhel9@sha256:5b86924790aeb996a7e3b7f9f4c8a3a676a83cd1d7484ae584101722d362c69b
+      command: ["python", "-m", "vllm.entrypoints.openai.api_server"]
+      args:
+        - "--model=/mnt/models"
+        - "--dtype=auto"
+        - "--max-model-len=4096"
+        - "--tensor-parallel-size=1"
+        - "--port=8080"
+        - "--served-model-name=llama32-3b-instruct-fp8"
+      env:
+        - name: HF_HOME
+          value: /tmp/hf_cache
+      ports:
+        - containerPort: 8080
+          protocol: TCP
+      resources:
+        requests:
+          cpu: "2"
+          memory: "8Gi"
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "4"
+          memory: "12Gi"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: shm
+          mountPath: /dev/shm
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 8080
+        initialDelaySeconds: 120
+        periodSeconds: 30
+        failureThreshold: 5
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8080
+        initialDelaySeconds: 90
+        periodSeconds: 10
+        failureThreshold: 5
+  volumes:
+    - name: shm
+      emptyDir:
+        medium: Memory
+        sizeLimit: "2Gi"
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule

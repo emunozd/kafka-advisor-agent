@@ -1,0 +1,11 @@
+# Maven
+kafka-advisor-app/target/
+kafka-advisor-app/.quarkus/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store

@@ -1,0 +1,31 @@
+aapiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: kafka-advisor-model
+  namespace: kafka-advisor
+  labels:
+    app.kubernetes.io/part-of: kafka-advisor
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    model:
+      modelFormat:
+        name: vLLM
+      runtime: kafka-advisor-vllm-runtime
+      storageUri: "oci://quay.io/rhoai-genaiops/llama32-3b-instruct-fp8"
+      storage:
+        parameters:
+          type: oci
+      resources:
+        requests:
+          cpu: "2"
+          memory: "8Gi"
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "4"
+          memory: "12Gi"
+          nvidia.com/gpu: "1"
+EOF

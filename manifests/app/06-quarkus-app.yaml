@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-advisor-app
+  namespace: kafka-advisor
+  labels:
+    app: kafka-advisor-app
+    app.kubernetes.io/part-of: kafka-advisor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-advisor-app
+  template:
+    metadata:
+      labels:
+        app: kafka-advisor-app
+    spec:
+      serviceAccountName: kafka-advisor-sa
+      containers:
+        - name: kafka-advisor
+          image: image-registry.openshift-image-registry.svc:5000/kafka-advisor/kafka-advisor-app:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: QUARKUS_LANGCHAIN4J_OPENAI_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-advisor-model-secret
+                  key: MODEL_API_URL
+            - name: QUARKUS_LANGCHAIN4J_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-advisor-model-secret
+                  key: MODEL_API_KEY
+            - name: KAFKA_ADVISOR_MODEL_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-advisor-model-secret
+                  key: MODEL_NAME
+            - name: QUARKUS_LANGCHAIN4J_OPENAI_TIMEOUT
+              value: "120s"
+          volumeMounts:
+            - name: prompt-config
+              mountPath: /deployments/config/prompt
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /q/health/live
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /q/health/ready
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+      volumes:
+        - name: prompt-config
+          configMap:
+            name: kafka-optimization-prompt
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-advisor-app
+  namespace: kafka-advisor
+  labels:
+    app: kafka-advisor-app
+    app.kubernetes.io/part-of: kafka-advisor
+spec:
+  selector:
+    app: kafka-advisor-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: kafka-advisor-app
+  namespace: kafka-advisor
+  labels:
+    app.kubernetes.io/part-of: kafka-advisor
+spec:
+  to:
+    kind: Service
+    name: kafka-advisor-app
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

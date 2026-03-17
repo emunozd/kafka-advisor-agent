@@ -31,7 +31,7 @@ public class KafkaAdvisorResource {
     String promptPath;
 
     private static final java.util.Set<String> SUPPORTED_KINDS =
-        java.util.Set.of("Kafka", "KafkaTopic");
+        java.util.Set.of("Kafka", "KafkaTopic", "KafkaUser", "KafkaMirrorMaker2");
 
     @GET
     @Produces(MediaType.TEXT_HTML)
@@ -50,22 +50,19 @@ public class KafkaAdvisorResource {
             if (!SUPPORTED_KINDS.contains(detectedKind)) {
                 ObjectNode result = mapper.createObjectNode();
                 result.put("recommendations",
-                    "• This tool applies the Kafka Optimization Theorem to Kafka and KafkaTopic CRDs only.\n" +
-                    "• Detected kind: " + detectedKind + " — not supported in this version.\n" +
-                    "• For KafkaUser: review quotas (producerByteRate, consumerByteRate) and ACL scope manually.\n" +
-                    "• For KafkaMirrorMaker2: review tasksMax, replication.factor and sync intervals manually.\n" +
-                    "• Paste a Kafka or KafkaTopic CRD to get AI-powered optimization recommendations.");
+                    "• Detected kind: " + detectedKind + " — not supported.\n" +
+                    "• Supported kinds: Kafka, KafkaTopic, KafkaUser, KafkaMirrorMaker2.\n" +
+                    "• Please paste a valid AMQ Streams CRD.");
                 result.put("yaml",
                     "# kind: " + detectedKind + " is not supported.\n" +
-                    "# Supported kinds: Kafka, KafkaTopic\n" +
-                    "# Please paste a valid Kafka or KafkaTopic CRD.");
+                    "# Supported: Kafka, KafkaTopic, KafkaUser, KafkaMirrorMaker2");
                 return jakarta.ws.rs.core.Response.ok(result).build();
             }
 
-            String systemPrompt = loadSystemPrompt();
+            String systemPrompt = loadSystemPrompt(detectedKind);
             String userMessage  = "Optimization goal: " + request.goal() +
                 "\n\nInput CRD YAML:\n" + request.yaml() +
-                "\n\nAnalyze this Kafka CRD and provide the optimized configuration.";
+                "\n\nAnalyze this " + detectedKind + " CRD and provide the optimized configuration.";
 
             dev.langchain4j.data.message.SystemMessage sys =
                 dev.langchain4j.data.message.SystemMessage.from(systemPrompt);
@@ -151,23 +148,15 @@ public class KafkaAdvisorResource {
     }
 
     private String cleanYaml(String raw) {
-        // Step 1: fix backslash+spaces (model artifact: \  name → \n  name)
         String result = raw.replaceAll("\\\\([ ]{1,8})", "\n$1");
-
-        // Step 2: standard JSON string unescaping
         result = result
             .replace("\\n", "\n")
             .replace("\\\"", "\"")
             .replace("\\t", "  ");
-
-        // Step 3: remove isolated backslashes at end of lines
         result = result
             .replaceAll("\\\\\\s*\n", "\n")
             .replaceAll("\\\\\\s*$", "");
 
-        // Step 4: strip trailing JSON wrapper chars at end of string only.
-        // Walk backwards through lines and remove lines that are ONLY
-        // JSON closing chars (quotes and braces), not valid YAML content.
         String[] lines = result.split("\n");
         int last = lines.length - 1;
         while (last >= 0 && lines[last].trim().matches("[\"{}\\[\\]]+")
@@ -180,24 +169,39 @@ public class KafkaAdvisorResource {
             sb.append(lines[i]);
         }
         result = sb.toString();
-
-        // Step 5: remove trailing "}} or "} stuck to last YAML line
         result = result.replaceAll("(\\{\\})[\"\\}]+$", "$1");
         result = result.replaceAll("([^{])[\"\\}]{2,}$", "$1");
-
-        // Step 6: collapse multiple blank lines
         result = result.replaceAll("\n{3,}", "\n\n").trim();
 
         return result;
     }
 
-    private String loadSystemPrompt() throws IOException {
-        java.nio.file.Path path = Paths.get(promptPath);
-        if (Files.exists(path)) return Files.readString(path);
+    private String loadSystemPrompt(String kind) throws IOException {
+        String fileName = switch (kind) {
+            case "KafkaUser"         -> "kafkauser-prompt.txt";
+            case "KafkaMirrorMaker2" -> "mm2-prompt.txt";
+            default                  -> "system-prompt.txt";
+        };
+
+        // Try mounted ConfigMap path first
+        java.nio.file.Path base = Paths.get(promptPath).getParent();
+        if (base != null) {
+            java.nio.file.Path specific = base.resolve(fileName);
+            if (Files.exists(specific)) return Files.readString(specific);
+        }
+
+        // Fallback to the default prompt file
+        java.nio.file.Path defaultPath = Paths.get(promptPath);
+        if (Files.exists(defaultPath)) return Files.readString(defaultPath);
+
+        // Final fallback to classpath
+        try (var is = getClass().getResourceAsStream("/" + fileName)) {
+            if (is != null) return new String(is.readAllBytes());
+        }
         try (var is = getClass().getResourceAsStream("/system-prompt.txt")) {
             if (is != null) return new String(is.readAllBytes());
         }
-        throw new IOException("System prompt not found: " + promptPath);
+        throw new IOException("System prompt not found for kind: " + kind);
     }
 
     public record AnalyzeRequest(String goal, String yaml) {}

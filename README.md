@@ -25,7 +25,8 @@
 5. [Updating the Knowledge Base](#updating-the-knowledge-base)
 6. [Supported CRD Kinds](#supported-crd-kinds)
 7. [Kafka Optimization Theorem Reference](#kafka-optimization-theorem-reference)
-8. [Troubleshooting](#troubleshooting)
+8. [Stopping and Starting the Agent](#stopping-and-starting-the-agent)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -542,6 +543,62 @@ The agent's knowledge base is built on the four-quadrant trade-off framework:
 
 Each optimization goal adjusts parameters toward the corresponding quadrant while
 noting the trade-offs with the opposing quadrant.
+
+---
+
+## Stopping and Starting the Agent
+
+The agent can be paused to free up GPU and CPU resources for other workloads,
+without losing the model weights stored in the PVC.
+
+### Stop (free the GPU)
+```bash
+# Scale the Quarkus app to zero
+oc scale deployment/kafka-advisor-app -n kafka-advisor --replicas=0
+
+# Delete the InferenceService to release the GPU
+oc delete inferenceservice kafka-advisor-model -n kafka-advisor
+```
+
+Verify the GPU is free:
+```bash
+oc get node crc -o jsonpath='{.status.allocatable.nvidia\.com/gpu}'
+# Expected: 1
+```
+
+> The PVC with model weights is preserved — the next start will be faster
+> because the OCI image is already cached on the node.
+
+### Start
+```bash
+# 1. Recreate the InferenceService
+oc apply -f manifests/rhoai/05-inference-service.yaml
+
+# 2. Wait for the model to be Ready (~3-5 min)
+oc wait inferenceservice/kafka-advisor-model -n kafka-advisor \
+  --for=condition=ready --timeout=10m
+
+# 3. Scale the Quarkus app back up
+oc scale deployment/kafka-advisor-app -n kafka-advisor --replicas=1
+
+# 4. Get the URL
+oc get route kafka-advisor-app -n kafka-advisor \
+  -o jsonpath='https://{.spec.host}'
+```
+
+### Verify full status
+```bash
+oc get pods,inferenceservice,route -n kafka-advisor
+```
+
+Expected output when fully running:
+
+| Resource | Name | Status |
+|---|---|---|
+| Pod | `kafka-advisor-model-predictor-xxx` | `2/2 Running` |
+| Pod | `kafka-advisor-app-xxx` | `1/1 Running` |
+| InferenceService | `kafka-advisor-model` | `READY=True` |
+| Route | `kafka-advisor-app` | HTTPS URL available |
 
 ---
 

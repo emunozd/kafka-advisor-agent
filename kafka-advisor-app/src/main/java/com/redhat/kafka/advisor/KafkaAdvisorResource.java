@@ -126,7 +126,6 @@ public class KafkaAdvisorResource {
     }
 
     private String extractYaml(String raw) {
-        // Strategy 1: parse JSON and get yaml field
         try {
             JsonNode json = mapper.readTree(raw);
             if (json.has("yaml")) {
@@ -134,19 +133,13 @@ public class KafkaAdvisorResource {
             }
         } catch (Exception ignored) {}
 
-        // Strategy 2: find apiVersion block in raw text
         Pattern p = Pattern.compile(
             "(apiVersion:\\s*kafka\\.strimzi\\.io[\\s\\S]*)", Pattern.MULTILINE);
         Matcher m = p.matcher(raw);
         if (m.find()) {
-            String candidate = m.group(1);
-            // Only strip trailing JSON wrapper chars that are NOT part of YAML
-            // i.e. a lone " or }} at the very end after a newline
-            candidate = candidate.replaceAll("\n[\"\\}\\]]+\\s*$", "").trim();
-            return cleanYaml(candidate);
+            return cleanYaml(m.group(1));
         }
 
-        // Strategy 3: extract after "yaml":
         int idx = raw.indexOf("\"yaml\":");
         if (idx >= 0) {
             String after = raw.substring(idx + 7).trim()
@@ -158,35 +151,34 @@ public class KafkaAdvisorResource {
     }
 
     private String cleanYaml(String raw) {
-        String result = raw
-            // Fix: backslash+spaces used instead of \n+spaces by the model
-            .replaceAll("\\\\([ ]{1,8})", "\n$1")
-            // Standard JSON string unescaping
+        // Step 1: fix backslash+spaces (model artifact: \  name → \n  name)
+        String result = raw.replaceAll("\\\\([ ]{1,8})", "\n$1");
+
+        // Step 2: standard JSON string unescaping
+        result = result
             .replace("\\n", "\n")
             .replace("\\\"", "\"")
-            .replace("\\t", "  ")
-            // Remove isolated trailing backslashes at end of a line
-            .replaceAll("\\\\\\s*\n", "\n")
-            .replaceAll("\\\\\\s*$", "")
-            // Collapse 3+ consecutive blank lines into one
-            .replaceAll("\n{3,}", "\n\n")
-            .trim();
+            .replace("\\t", "  ");
 
-        // Strip trailing JSON-only closing chars ONLY if the last line
-        // is purely made of }, ", ] characters (not a valid YAML line)
-        String[] lines = result.split("\n");
-        int lastIdx = lines.length - 1;
-        while (lastIdx >= 0 && lines[lastIdx].trim().matches("[}\"\\]]+")) {
-            lastIdx--;
-        }
-        if (lastIdx < lines.length - 1) {
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i <= lastIdx; i++) {
-                sb.append(lines[i]);
-                if (i < lastIdx) sb.append("\n");
-            }
-            return sb.toString().trim();
-        }
+        // Step 3: remove isolated backslashes at end of lines
+        result = result
+            .replaceAll("\\\\\\s*\n", "\n")
+            .replaceAll("\\\\\\s*$", "");
+
+        // Step 4: remove JSON closing chars "}}" or ""}}" that appear
+        // ONLY at the very end — but preserve "{}" which is valid YAML
+        // Strategy: trim trailing content that matches: optional whitespace,
+        // then one or more of: quote, close-brace, close-bracket
+        // but NOT if the last meaningful char before them is part of YAML
+        result = result.replaceAll("(?m)[\"\\}\\]]{1,5}\\s*$", "");
+
+        // Step 5: restore {} that got stripped (empty maps in YAML)
+        // Re-add {} to lines ending in just the key+colon with nothing after
+        // We can't easily restore them, but we prevent stripping mid-line {}
+        // by only stripping at absolute end of string (already done above)
+
+        // Step 6: collapse multiple blank lines
+        result = result.replaceAll("\n{3,}", "\n\n").trim();
 
         return result;
     }

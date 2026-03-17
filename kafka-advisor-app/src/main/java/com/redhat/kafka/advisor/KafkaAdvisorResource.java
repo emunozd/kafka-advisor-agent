@@ -11,7 +11,6 @@ import io.quarkus.qute.TemplateInstance;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response.Status;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.io.IOException;
@@ -24,14 +23,9 @@ import java.util.regex.Pattern;
 @Path("/")
 public class KafkaAdvisorResource {
 
-    @Inject
-    Template advisor;
-
-    @Inject
-    ChatLanguageModel chatModel;
-
-    @Inject
-    ObjectMapper mapper;
+    @Inject Template advisor;
+    @Inject ChatLanguageModel chatModel;
+    @Inject ObjectMapper mapper;
 
     @ConfigProperty(name = "kafka.advisor.prompt.path",
                     defaultValue = "classpath:system-prompt.txt")
@@ -50,12 +44,9 @@ public class KafkaAdvisorResource {
     public jakarta.ws.rs.core.Response analyze(AnalyzeRequest request) {
         try {
             String systemPrompt = loadSystemPrompt();
-
-            String userMessage = String.format(
-                "Optimization goal: %s\n\nInput CRD YAML:\n%s\n\n" +
-                "Analyze this Kafka CRD and provide the optimized configuration.",
-                request.goal(), request.yaml()
-            );
+            String userMessage  = "Optimization goal: " + request.goal() +
+                "\n\nInput CRD YAML:\n" + request.yaml() +
+                "\n\nAnalyze this Kafka CRD and provide the optimized configuration.";
 
             dev.langchain4j.data.message.SystemMessage sys =
                 dev.langchain4j.data.message.SystemMessage.from(systemPrompt);
@@ -69,22 +60,17 @@ public class KafkaAdvisorResource {
             raw = raw.replaceAll("(?s)```json\\s*", "").replaceAll("```", "").trim();
 
             ObjectNode result = mapper.createObjectNode();
-
-            // ── Extract recommendations ──────────────────────────────
-            String recommendations = extractRecommendations(raw);
-            result.put("recommendations", recommendations);
-
-            // ── Extract YAML ─────────────────────────────────────────
-            String yaml = extractYaml(raw);
-            result.put("yaml", yaml);
+            result.put("recommendations", extractRecommendations(raw));
+            result.put("yaml", extractYaml(raw));
 
             return jakarta.ws.rs.core.Response.ok(result).build();
 
         } catch (Exception e) {
-            return jakarta.ws.rs.core.Response
-                .status(Status.INTERNAL_SERVER_ERROR)
-                .entity(Map.of("error", e.getMessage()))
-                .build();
+            ObjectNode err = mapper.createObjectNode();
+            err.put("error", e.getClass().getSimpleName() + ": " + e.getMessage());
+            err.put("recommendations", "Backend error: " + e.getMessage());
+            err.put("yaml", "# Error processing response");
+            return jakarta.ws.rs.core.Response.ok(err).build();
         }
     }
 
@@ -107,7 +93,7 @@ public class KafkaAdvisorResource {
             }
         } catch (Exception ignored) {}
 
-        // Fallback: extract bullet lines from raw text
+        // Fallback: extract bullet lines
         StringBuilder sb = new StringBuilder();
         for (String line : raw.split("\n")) {
             String t = line.trim();
@@ -115,31 +101,44 @@ public class KafkaAdvisorResource {
                 sb.append(t).append("\n");
             }
         }
-        return sb.length() > 0 ? sb.toString().trim() : raw;
+        return sb.length() > 0 ? sb.toString().trim()
+             : "See optimized YAML for changes applied.";
     }
 
     private String extractYaml(String raw) {
-        // Strategy 1: look for apiVersion: anywhere in the text
-        Pattern apiPattern = Pattern.compile(
-            "(apiVersion:\\s*kafka\\.strimzi\\.io.*)", Pattern.DOTALL);
-        Matcher m = apiPattern.matcher(raw);
+        // Strategy 1: find apiVersion block anywhere in the text
+        Pattern p = Pattern.compile(
+            "(apiVersion:\\s*kafka\\.strimzi\\.io[\\s\\S]*)", Pattern.MULTILINE);
+        Matcher m = p.matcher(raw);
         if (m.find()) {
             String candidate = m.group(1);
-            // Clean up JSON closing characters at the end
+            // Remove trailing JSON closing chars
             candidate = candidate.replaceAll("[}\"\\]]+\\s*$", "").trim();
+            // Unescape \n and \" from JSON string encoding
+            candidate = candidate.replace("\\n", "\n").replace("\\\"", "\"");
             return candidate;
         }
 
-        // Strategy 2: try to get yaml field from JSON
+        // Strategy 2: try JSON yaml field
         try {
             JsonNode json = mapper.readTree(raw);
             if (json.has("yaml")) {
-                return json.get("yaml").asText();
+                String y = json.get("yaml").asText();
+                return y.replace("\\n", "\n").replace("\\\"", "\"");
             }
         } catch (Exception ignored) {}
 
-        return "# Could not extract optimized YAML from model response.\n" +
-               "# Check the recommendations panel for details.";
+        // Strategy 3: return everything after "yaml":
+        int idx = raw.indexOf("\"yaml\":");
+        if (idx >= 0) {
+            String after = raw.substring(idx + 7).trim();
+            // Strip leading quote/pipe
+            after = after.replaceAll("^[\"\\|\\s]+", "");
+            after = after.replace("\\n", "\n").replace("\\\"", "\"");
+            return after;
+        }
+
+        return "# Could not extract YAML.\n# See recommendations panel.";
     }
 
     private String loadSystemPrompt() throws IOException {
@@ -148,7 +147,7 @@ public class KafkaAdvisorResource {
         try (var is = getClass().getResourceAsStream("/system-prompt.txt")) {
             if (is != null) return new String(is.readAllBytes());
         }
-        throw new IOException("System prompt not found at: " + promptPath);
+        throw new IOException("System prompt not found: " + promptPath);
     }
 
     public record AnalyzeRequest(String goal, String yaml) {}

@@ -23,15 +23,16 @@
   .panel-head { padding: 8px 12px; background: #f5f5f5; border-bottom: 1px solid #ddd;
     display: flex; justify-content: space-between; align-items: center; }
   .panel-label { font-size: 11px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.05em; }
-  textarea { width: 100%; height: 280px; border: none; outline: none; padding: 12px;
+  textarea { width: 100%; height: 300px; border: none; outline: none; padding: 12px;
     font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.6; resize: none; }
-  .output-area { width: 100%; height: 280px; padding: 12px; font-family: 'Courier New', monospace;
-    font-size: 12px; line-height: 1.6; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+  .output-area { width: 100%; height: 300px; padding: 12px; font-family: 'Courier New', monospace;
+    font-size: 12px; line-height: 1.6; overflow-y: auto; white-space: pre; word-break: normal;
+    background: white; }
   .output-area.empty { display: flex; align-items: center; justify-content: center;
-    font-family: sans-serif; color: #aaa; font-size: 13px; }
+    font-family: sans-serif; color: #aaa; font-size: 13px; white-space: normal; }
   .recs-panel { background: white; border-radius: 8px; border: 1px solid #ddd;
     margin-bottom: 1rem; overflow: hidden; }
-  .recs-body { padding: 1rem; min-height: 80px; font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+  .recs-body { padding: 1rem; min-height: 80px; font-size: 14px; line-height: 1.8; white-space: pre-wrap; }
   .recs-body.empty { color: #aaa; font-size: 13px; }
   .run-btn { width: 100%; padding: 12px; background: #cc0000; color: white; border: none;
     border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background 0.15s;
@@ -130,26 +131,37 @@ function setGoal(el) {
 
 function copyOutput() {
   const el = document.getElementById('output-yaml');
-  if (!el.classList.contains('empty')) navigator.clipboard.writeText(el.textContent);
+  if (!el.classList.contains('empty')) {
+    navigator.clipboard.writeText(el.textContent);
+  }
+}
+
+function setOutput(el, text, empty) {
+  if (empty) {
+    el.className = el.className.includes('output-area') ? 'output-area empty' : 'recs-body empty';
+    el.textContent = text;
+  } else {
+    el.className = el.className.includes('output-area') ? 'output-area' : 'recs-body';
+    // Replace escaped \n with real newlines
+    el.textContent = text.replace(/\\n/g, '\n');
+  }
 }
 
 async function runAgent() {
   const yaml = document.getElementById('input-yaml').value.trim();
   if (!yaml) return;
 
-  const btn    = document.getElementById('run-btn');
+  const btn     = document.getElementById('run-btn');
   const spinner = document.getElementById('spinner');
-  const label  = document.getElementById('btn-label');
-  const recsEl = document.getElementById('recs-area');
-  const outEl  = document.getElementById('output-yaml');
+  const label   = document.getElementById('btn-label');
+  const recsEl  = document.getElementById('recs-area');
+  const outEl   = document.getElementById('output-yaml');
 
   btn.disabled = true;
   spinner.style.display = 'block';
   label.textContent = 'Analyzing...';
-  recsEl.className = 'recs-body empty';
-  recsEl.textContent = 'Agent is thinking...';
-  outEl.className = 'output-area empty';
-  outEl.textContent = 'Generating optimized YAML...';
+  setOutput(recsEl, 'Agent is thinking...', true);
+  setOutput(outEl,  'Generating optimized YAML...', true);
 
   try {
     const resp = await fetch('/analyze', {
@@ -161,19 +173,15 @@ async function runAgent() {
     const data = await resp.json();
 
     if (data.recommendations && data.yaml) {
-      recsEl.className = 'recs-body';
-      recsEl.textContent = data.recommendations;
-      outEl.className = 'output-area';
-      outEl.textContent = data.yaml;
+      setOutput(recsEl, data.recommendations, false);
+      setOutput(outEl,  data.yaml, false);
     } else if (data.error) {
-      recsEl.className = 'recs-body';
-      recsEl.textContent = 'Error: ' + data.error;
-      outEl.className = 'output-area empty';
-      outEl.textContent = 'Request failed.';
+      setOutput(recsEl, 'Error: ' + data.error, false);
+      setOutput(outEl,  'Request failed.', true);
     }
   } catch(e) {
-    recsEl.className = 'recs-body';
-    recsEl.textContent = 'Network error: ' + e.message;
+    setOutput(recsEl, 'Network error: ' + e.message, false);
+    setOutput(outEl,  'Request failed.', true);
   }
 
   btn.disabled = false;

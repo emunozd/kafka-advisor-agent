@@ -48,9 +48,8 @@
   .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.4);
     border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .kind-hint { font-size: 12px; color: #888; margin-bottom: 10px; line-height: 1.5; }
-  .kind-hint span { font-family: monospace; background: #f0f0f0; padding: 1px 6px;
-    border-radius: 4px; margin-right: 4px; }
+  .kind-hint { font-size: 12px; color: #888; padding: 6px 12px 0; line-height: 1.5; }
+  .kind-hint code { background: #f0f0f0; padding: 1px 6px; border-radius: 4px; margin-right: 4px; font-family: monospace; }
   @media (max-width: 700px) { .editor-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -81,13 +80,12 @@
         <span class="panel-label">Input CRD YAML</span>
         <span class="supported-badge">Kafka &amp; KafkaTopic only</span>
       </div>
-      <p class="kind-hint" style="padding: 6px 12px 0; margin:0;">
-        Supported:
-        <span>kind: Kafka</span>
-        <span>kind: KafkaTopic</span>
+      <p class="kind-hint">
+        Supported: <code>kind: Kafka</code> <code>kind: KafkaTopic</code>
       </p>
-      <textarea id="input-yaml" spellcheck="false" placeholder="# Paste your Kafka or KafkaTopic CRD YAML here...
-# Other kinds (KafkaUser, KafkaMirrorMaker2) are not supported by this tool."></textarea>
+      <textarea id="input-yaml" spellcheck="false"
+        placeholder="# Paste your Kafka or KafkaTopic CRD YAML here...
+# Other kinds (KafkaUser, KafkaMirrorMaker2) are not supported."></textarea>
     </div>
     <div class="panel">
       <div class="panel-head">
@@ -115,41 +113,26 @@
 </main>
 
 <script>
-const DEFAULT_YAML = `apiVersion: kafka.strimzi.io/v1beta2
-kind: KafkaTopic
-metadata:
-  name: orders-events
-  namespace: amq-streams
-  labels:
-    strimzi.io/cluster: my-cluster
-spec:
-  partitions: 3
-  replicas: 2
-  config:
-    retention.ms: "604800000"
-    segment.bytes: "1073741824"
-    min.insync.replicas: "1"
-    cleanup.policy: delete`;
+const DEFAULT_YAML = "apiVersion: kafka.strimzi.io/v1beta2\nkind: KafkaTopic\nmetadata:\n  name: orders-events\n  namespace: amq-streams\n  labels:\n    strimzi.io/cluster: my-cluster\nspec:\n  partitions: 3\n  replicas: 2\n  config:\n    retention.ms: \"604800000\"\n    segment.bytes: \"1073741824\"\n    min.insync.replicas: \"1\"\n    cleanup.policy: delete";
 
 document.getElementById('input-yaml').value = DEFAULT_YAML;
 let currentGoal = 'throughput';
-
 const SUPPORTED_KINDS = ['Kafka', 'KafkaTopic'];
 
 function setGoal(el) {
-  document.querySelectorAll('.goal-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.goal-btn').forEach(function(b) { b.classList.remove('active'); });
   el.classList.add('active');
   currentGoal = el.dataset.goal;
   document.getElementById('goal-tag').textContent = currentGoal;
 }
 
 function detectKind(yaml) {
-  const match = yaml.match(/^kind:\s*(\S+)/m);
+  var match = yaml.match(/^kind:\s*(\S+)/m);
   return match ? match[1].trim() : 'Unknown';
 }
 
 function copyOutput() {
-  const el = document.getElementById('output-yaml');
+  var el = document.getElementById('output-yaml');
   if (!el.classList.contains('empty')) {
     navigator.clipboard.writeText(el.textContent);
   }
@@ -157,36 +140,32 @@ function copyOutput() {
 
 function setOutput(el, text, mode) {
   el.className = el.className.replace(/\s*(empty|unsupported)/g, '');
-  if (mode === 'empty') {
-    el.className += ' empty';
-  } else if (mode === 'unsupported') {
-    el.className += ' unsupported';
-  }
+  if (mode === 'empty') el.className += ' empty';
+  else if (mode === 'unsupported') el.className += ' unsupported';
   el.textContent = text.replace(/\\n/g, '\n');
 }
 
-async function runAgent() {
-  const yaml = document.getElementById('input-yaml').value.trim();
+function runAgent() {
+  var yaml = document.getElementById('input-yaml').value.trim();
   if (!yaml) return;
 
-  const recsEl  = document.getElementById('recs-area');
-  const outEl   = document.getElementById('output-yaml');
-  const btn     = document.getElementById('run-btn');
-  const spinner = document.getElementById('spinner');
-  const label   = document.getElementById('btn-label');
+  var recsEl  = document.getElementById('recs-area');
+  var outEl   = document.getElementById('output-yaml');
+  var btn     = document.getElementById('run-btn');
+  var spinner = document.getElementById('spinner');
+  var label   = document.getElementById('btn-label');
 
-  // ── Client-side kind validation ───────────────────────────────
-  const kind = detectKind(yaml);
-  if (!SUPPORTED_KINDS.includes(kind)) {
+  var detectedKind = detectKind(yaml);
+  if (SUPPORTED_KINDS.indexOf(detectedKind) === -1) {
     setOutput(recsEl,
-      `• This tool applies the Kafka Optimization Theorem to Kafka and KafkaTopic CRDs only.\n` +
-      `• Detected kind: ${kind} — not supported in this version.\n` +
-      `• For KafkaUser: review quotas (producerByteRate, consumerByteRate) and ACL scope manually.\n` +
-      `• For KafkaMirrorMaker2: review tasksMax, replication.factor and sync intervals manually.\n` +
-      `• Paste a Kafka or KafkaTopic CRD to get AI-powered optimization recommendations.`,
+      "• This tool applies the Kafka Optimization Theorem to Kafka and KafkaTopic CRDs only.\n" +
+      "• Detected kind: " + detectedKind + " — not supported in this version.\n" +
+      "• For KafkaUser: review quotas (producerByteRate, consumerByteRate) and ACL scope manually.\n" +
+      "• For KafkaMirrorMaker2: review tasksMax, replication.factor and sync intervals manually.\n" +
+      "• Paste a Kafka or KafkaTopic CRD to get AI-powered optimization recommendations.",
       'unsupported');
     setOutput(outEl,
-      `# kind: ${kind} is not supported.\n# Supported kinds: Kafka, KafkaTopic\n# Please paste a valid Kafka or KafkaTopic CRD.`,
+      "# kind: " + detectedKind + " is not supported.\n# Supported kinds: Kafka, KafkaTopic\n# Please paste a valid Kafka or KafkaTopic CRD.",
       '');
     return;
   }
@@ -197,15 +176,13 @@ async function runAgent() {
   setOutput(recsEl, 'Agent is thinking...', 'empty');
   setOutput(outEl,  'Generating optimized YAML...', 'empty');
 
-  try {
-    const resp = await fetch('/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: currentGoal, yaml })
-    });
-
-    const data = await resp.json();
-
+  fetch('/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ goal: currentGoal, yaml: yaml })
+  })
+  .then(function(resp) { return resp.json(); })
+  .then(function(data) {
     if (data.recommendations && data.yaml) {
       setOutput(recsEl, data.recommendations, '');
       setOutput(outEl,  data.yaml, '');
@@ -213,14 +190,16 @@ async function runAgent() {
       setOutput(recsEl, 'Error: ' + data.error, 'unsupported');
       setOutput(outEl,  'Request failed.', 'empty');
     }
-  } catch(e) {
+  })
+  .catch(function(e) {
     setOutput(recsEl, 'Network error: ' + e.message, 'unsupported');
     setOutput(outEl,  'Request failed.', 'empty');
-  }
-
-  btn.disabled = false;
-  spinner.style.display = 'none';
-  label.textContent = 'Analyze & Optimize';
+  })
+  .finally(function() {
+    btn.disabled = false;
+    spinner.style.display = 'none';
+    label.textContent = 'Analyze & Optimize';
+  });
 }
 </script>
 </body>

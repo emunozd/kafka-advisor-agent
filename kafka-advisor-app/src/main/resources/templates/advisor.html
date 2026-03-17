@@ -78,7 +78,7 @@
     <div class="panel">
       <div class="panel-head">
         <span class="panel-label">Input CRD YAML</span>
-        <span class="supported-badge">Kafka &amp; KafkaTopic only</span>
+        <span class="supported-badge">All AMQ Streams CRDs</span>
       </div>
       <p class="kind-hint">
         Supported: <code>kind: Kafka</code> <code>kind: KafkaTopic</code>
@@ -117,7 +117,7 @@ const DEFAULT_YAML = "apiVersion: kafka.strimzi.io/v1beta2\nkind: KafkaTopic\nme
 
 document.getElementById('input-yaml').value = DEFAULT_YAML;
 let currentGoal = 'throughput';
-const SUPPORTED_KINDS = ['Kafka', 'KafkaTopic'];
+const SUPPORTED_KINDS = ['Kafka', 'KafkaTopic', 'KafkaUser', 'KafkaMirrorMaker2'];
 
 function setGoal(el) {
   document.querySelectorAll('.goal-btn').forEach(function(b) { b.classList.remove('active'); });

@@ -508,14 +508,29 @@ oc create configmap kafka-optimization-prompt \
 
 ---
 
-## Supported CRD Kinds
+## Supported CRD Kinds and prompt strategy
 
-| Kind | API Group | Analyzed fields | Example optimizations |
-|---|---|---|---|
-| `Kafka` | `kafka.strimzi.io/v1beta2` | Broker config, listeners, KRaft/ZK settings | `num.io.threads`, `log.retention.ms`, `default.replication.factor` |
-| `KafkaTopic` | `kafka.strimzi.io/v1beta2` | `partitions`, `replicas`, topic config map | `partitions`, `min.insync.replicas`, `retention.ms`, `compression.type` |
-| `KafkaUser` | `kafka.strimzi.io/v1beta2` | Quotas, ACLs, authentication type | `producerByteRate`, `consumerByteRate`, `requestPercentage` |
-| `KafkaMirrorMaker2` | `kafka.strimzi.io/v1beta2` | Replication policy, offset sync, connectors | `replication.factor`, `refresh.topics.interval.seconds`, heartbeat topics |
+The agent uses a dedicated system prompt per CRD kind, all stored as keys
+in the `kafka-optimization-prompt` ConfigMap. The Quarkus app detects the
+`kind:` field from the input YAML and selects the correct prompt automatically.
+
+| CRD Kind | Prompt file | Optimization framework |
+|---|---|---|
+| `Kafka` | `system-prompt.txt` | Kafka Optimization Theorem (broker config) |
+| `KafkaTopic` | `system-prompt.txt` | Kafka Optimization Theorem (topic config) |
+| `KafkaUser` | `kafkauser-prompt.txt` | Quotas framework (producerByteRate, consumerByteRate, requestPercentage) |
+| `KafkaMirrorMaker2` | `mm2-prompt.txt` | Replication framework (tasksMax, replication.factor, sync intervals) |
+
+### Updating a prompt without rebuilding
+```bash
+# Edit the prompt directly in OCP — takes effect on next request
+oc edit configmap kafka-optimization-prompt -n kafka-advisor
+
+# Or patch a specific key
+oc patch configmap kafka-optimization-prompt -n kafka-advisor \
+  --type='merge' \
+  -p='{"data":{"mm2-prompt.txt":"...new content..."}}'
+```
 
 ---
 

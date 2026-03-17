@@ -126,7 +126,7 @@ public class KafkaAdvisorResource {
     }
 
     private String extractYaml(String raw) {
-        // Strategy 1: extract yaml field from JSON and unescape properly
+        // Strategy 1: parse JSON and get yaml field
         try {
             JsonNode json = mapper.readTree(raw);
             if (json.has("yaml")) {
@@ -142,7 +142,7 @@ public class KafkaAdvisorResource {
             return cleanYaml(m.group(1).replaceAll("[}\"\\]]+\\s*$", "").trim());
         }
 
-        // Strategy 3: extract everything after "yaml":
+        // Strategy 3: extract after "yaml":
         int idx = raw.indexOf("\"yaml\":");
         if (idx >= 0) {
             String after = raw.substring(idx + 7).trim()
@@ -155,15 +155,20 @@ public class KafkaAdvisorResource {
 
     private String cleanYaml(String raw) {
         return raw
-            // Unescape JSON string encoding
+            // Fix: "metadata:\  name:" → "metadata:\n  name:"
+            // Model sometimes emits \<space> instead of \n<space>
+            .replaceAll("\\\\([ ]{1,8})", "\n$1")
+            // Standard JSON unescaping
             .replace("\\n", "\n")
             .replace("\\\"", "\"")
             .replace("\\t", "  ")
             // Remove trailing JSON closing chars
             .replaceAll("[}\"\\]]+\\s*$", "")
-            // Remove backslash at end of lines (model artifact)
+            // Remove isolated backslashes at end of line
             .replaceAll("\\\\\\s*\n", "\n")
             .replaceAll("\\\\$", "")
+            // Collapse multiple blank lines
+            .replaceAll("\n{3,}", "\n\n")
             .trim();
     }
 

@@ -23,7 +23,7 @@
    - [Step 9 — Deploy the Quarkus app](#step-9--deploy-the-quarkus-app)
    - [Step 10 — Access the UI](#step-10--access-the-ui)
 5. [Updating the Knowledge Base](#updating-the-knowledge-base)
-6. [Supported CRD Kinds](#supported-crd-kinds)
+6. [Supported CRD Kinds](#supported-crd-kinds-and-prompt-strategy)
 7. [Kafka Optimization Theorem Reference](#kafka-optimization-theorem-reference)
 8. [Stopping and Starting the Agent](#stopping-and-starting-the-agent)
 9. [Troubleshooting](#troubleshooting)

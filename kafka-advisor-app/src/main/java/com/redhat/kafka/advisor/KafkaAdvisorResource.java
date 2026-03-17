@@ -16,7 +16,6 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -46,10 +45,8 @@ public class KafkaAdvisorResource {
     @Produces(MediaType.APPLICATION_JSON)
     public jakarta.ws.rs.core.Response analyze(AnalyzeRequest request) {
         try {
-            // ── Detect kind ───────────────────────────────────────────
             String detectedKind = detectKind(request.yaml());
 
-            // ── Validate kind ─────────────────────────────────────────
             if (!SUPPORTED_KINDS.contains(detectedKind)) {
                 ObjectNode result = mapper.createObjectNode();
                 result.put("recommendations",
@@ -65,7 +62,6 @@ public class KafkaAdvisorResource {
                 return jakarta.ws.rs.core.Response.ok(result).build();
             }
 
-            // ── Call the model ────────────────────────────────────────
             String systemPrompt = loadSystemPrompt();
             String userMessage  = "Optimization goal: " + request.goal() +
                 "\n\nInput CRD YAML:\n" + request.yaml() +
@@ -97,8 +93,7 @@ public class KafkaAdvisorResource {
     private String detectKind(String yaml) {
         Pattern p = Pattern.compile("^kind:\\s*(\\S+)", Pattern.MULTILINE);
         Matcher m = p.matcher(yaml);
-        if (m.find()) return m.group(1).trim();
-        return "Unknown";
+        return m.find() ? m.group(1).trim() : "Unknown";
     }
 
     private String extractRecommendations(String raw) {
@@ -131,30 +126,45 @@ public class KafkaAdvisorResource {
     }
 
     private String extractYaml(String raw) {
+        // Strategy 1: extract yaml field from JSON and unescape properly
+        try {
+            JsonNode json = mapper.readTree(raw);
+            if (json.has("yaml")) {
+                return cleanYaml(json.get("yaml").asText());
+            }
+        } catch (Exception ignored) {}
+
+        // Strategy 2: find apiVersion block in raw text
         Pattern p = Pattern.compile(
             "(apiVersion:\\s*kafka\\.strimzi\\.io[\\s\\S]*)", Pattern.MULTILINE);
         Matcher m = p.matcher(raw);
         if (m.find()) {
-            String candidate = m.group(1)
-                .replaceAll("[}\"\\]]+\\s*$", "").trim();
-            return candidate.replace("\\n", "\n").replace("\\\"", "\"");
+            return cleanYaml(m.group(1).replaceAll("[}\"\\]]+\\s*$", "").trim());
         }
-        try {
-            JsonNode json = mapper.readTree(raw);
-            if (json.has("yaml")) {
-                return json.get("yaml").asText()
-                    .replace("\\n", "\n").replace("\\\"", "\"");
-            }
-        } catch (Exception ignored) {}
 
+        // Strategy 3: extract everything after "yaml":
         int idx = raw.indexOf("\"yaml\":");
         if (idx >= 0) {
             String after = raw.substring(idx + 7).trim()
-                .replaceAll("^[\"\\|\\s]+", "")
-                .replace("\\n", "\n").replace("\\\"", "\"");
-            return after;
+                .replaceAll("^[\"\\|\\s]+", "");
+            return cleanYaml(after);
         }
+
         return "# Could not extract YAML.\n# See recommendations panel.";
+    }
+
+    private String cleanYaml(String raw) {
+        return raw
+            // Unescape JSON string encoding
+            .replace("\\n", "\n")
+            .replace("\\\"", "\"")
+            .replace("\\t", "  ")
+            // Remove trailing JSON closing chars
+            .replaceAll("[}\"\\]]+\\s*$", "")
+            // Remove backslash at end of lines (model artifact)
+            .replaceAll("\\\\\\s*\n", "\n")
+            .replaceAll("\\\\$", "")
+            .trim();
     }
 
     private String loadSystemPrompt() throws IOException {

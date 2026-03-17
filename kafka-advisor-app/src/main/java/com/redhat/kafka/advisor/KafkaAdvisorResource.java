@@ -12,13 +12,14 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response.Status;
-
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Path("/")
 public class KafkaAdvisorResource {
@@ -64,36 +65,20 @@ public class KafkaAdvisorResource {
             Response<AiMessage> resp = chatModel.generate(sys, usr);
             String raw = resp.content().text().trim();
 
-            // Strip markdown fences if model adds them
+            // Strip markdown fences
             raw = raw.replaceAll("(?s)```json\\s*", "").replaceAll("```", "").trim();
 
-            // Try to parse as JSON
-            JsonNode json;
-            try {
-                json = mapper.readTree(raw);
-            } catch (Exception parseEx) {
-                // Model returned malformed JSON — wrap it as plain text
-                ObjectNode fallback = mapper.createObjectNode();
-                fallback.put("recommendations", raw);
-                fallback.put("yaml", "# Could not parse optimized YAML from model response.\n" +
-                                     "# Raw response saved in recommendations panel.");
-                return jakarta.ws.rs.core.Response.ok(fallback).build();
-            }
+            ObjectNode result = mapper.createObjectNode();
 
-            // Normalize: if recommendations is an array, join into string
-            if (json.has("recommendations") && json.get("recommendations").isArray()) {
-                StringBuilder sb = new StringBuilder();
-                for (JsonNode item : json.get("recommendations")) {
-                    String line = item.asText().trim();
-                    if (!line.startsWith("•") && !line.startsWith("-")) {
-                        sb.append("• ");
-                    }
-                    sb.append(line).append("\n");
-                }
-                ((ObjectNode) json).put("recommendations", sb.toString().trim());
-            }
+            // ── Extract recommendations ──────────────────────────────
+            String recommendations = extractRecommendations(raw);
+            result.put("recommendations", recommendations);
 
-            return jakarta.ws.rs.core.Response.ok(json).build();
+            // ── Extract YAML ─────────────────────────────────────────
+            String yaml = extractYaml(raw);
+            result.put("yaml", yaml);
+
+            return jakarta.ws.rs.core.Response.ok(result).build();
 
         } catch (Exception e) {
             return jakarta.ws.rs.core.Response
@@ -103,11 +88,63 @@ public class KafkaAdvisorResource {
         }
     }
 
+    private String extractRecommendations(String raw) {
+        // Try JSON parse first
+        try {
+            JsonNode json = mapper.readTree(raw);
+            if (json.has("recommendations")) {
+                JsonNode rec = json.get("recommendations");
+                if (rec.isTextual()) return rec.asText();
+                if (rec.isArray()) {
+                    StringBuilder sb = new StringBuilder();
+                    for (JsonNode item : rec) {
+                        String line = item.asText().trim();
+                        if (!line.startsWith("•") && !line.startsWith("-")) sb.append("• ");
+                        sb.append(line).append("\n");
+                    }
+                    return sb.toString().trim();
+                }
+            }
+        } catch (Exception ignored) {}
+
+        // Fallback: extract bullet lines from raw text
+        StringBuilder sb = new StringBuilder();
+        for (String line : raw.split("\n")) {
+            String t = line.trim();
+            if (t.startsWith("•") || t.startsWith("-") || t.startsWith("*")) {
+                sb.append(t).append("\n");
+            }
+        }
+        return sb.length() > 0 ? sb.toString().trim() : raw;
+    }
+
+    private String extractYaml(String raw) {
+        // Strategy 1: look for apiVersion: anywhere in the text
+        Pattern apiPattern = Pattern.compile(
+            "(apiVersion:\\s*kafka\\.strimzi\\.io.*)", Pattern.DOTALL);
+        Matcher m = apiPattern.matcher(raw);
+        if (m.find()) {
+            String candidate = m.group(1);
+            // Clean up JSON closing characters at the end
+            candidate = candidate.replaceAll("[}\"\\]]+\\s*$", "").trim();
+            return candidate;
+        }
+
+        // Strategy 2: try to get yaml field from JSON
+        try {
+            JsonNode json = mapper.readTree(raw);
+            if (json.has("yaml")) {
+                return json.get("yaml").asText();
+            }
+        } catch (Exception ignored) {}
+
+        return "# Could not extract optimized YAML from model response.\n" +
+               "# Check the recommendations panel for details.";
+    }
+
     private String loadSystemPrompt() throws IOException {
         java.nio.file.Path path = Paths.get(promptPath);
-        if (Files.exists(path)) {
-            return Files.readString(path);
-        }
+        if (Files.exists(path)) return Files.readString(path);
         try (var is = getClass().getResourceAsStream("/system-prompt.txt")) {
             if (is != null) return new String(is.readAllBytes());
         }

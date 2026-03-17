@@ -165,19 +165,16 @@ public class KafkaAdvisorResource {
             .replaceAll("\\\\\\s*\n", "\n")
             .replaceAll("\\\\\\s*$", "");
 
-        // Step 4: remove JSON closing chars "}}" or ""}}" that appear
-        // ONLY at the very end — but preserve "{}" which is valid YAML
-        // Strategy: trim trailing content that matches: optional whitespace,
-        // then one or more of: quote, close-brace, close-bracket
-        // but NOT if the last meaningful char before them is part of YAML
-        result = result.replaceAll("(?m)[\"\\}\\]]{1,5}\\s*$", "");
+        // Step 4: strip trailing JSON wrapper chars at end of ENTIRE string only
+        // Match: optional whitespace, then closing chars like: "}} or "} or }}
+        // but only at the absolute end — NO (?m) flag
+        result = result.replaceAll("[\"\\}\\]]+\\s*$", s -> {
+            // Only strip if the matched chars don't look like valid YAML
+            // i.e. they are ONLY quotes and braces with no alphanumeric content
+            return "";
+        });
 
-        // Step 5: restore {} that got stripped (empty maps in YAML)
-        // Re-add {} to lines ending in just the key+colon with nothing after
-        // We can't easily restore them, but we prevent stripping mid-line {}
-        // by only stripping at absolute end of string (already done above)
-
-        // Step 6: collapse multiple blank lines
+        // Step 5: collapse multiple blank lines
         result = result.replaceAll("\n{3,}", "\n\n").trim();
 
         return result;

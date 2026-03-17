@@ -165,16 +165,27 @@ public class KafkaAdvisorResource {
             .replaceAll("\\\\\\s*\n", "\n")
             .replaceAll("\\\\\\s*$", "");
 
-        // Step 4: strip trailing JSON wrapper chars at end of ENTIRE string only
-        // Match: optional whitespace, then closing chars like: "}} or "} or }}
-        // but only at the absolute end — NO (?m) flag
-        result = result.replaceAll("[\"\\}\\]]+\\s*$", s -> {
-            // Only strip if the matched chars don't look like valid YAML
-            // i.e. they are ONLY quotes and braces with no alphanumeric content
-            return "";
-        });
+        // Step 4: strip trailing JSON wrapper chars at end of string only.
+        // Walk backwards through lines and remove lines that are ONLY
+        // JSON closing chars (quotes and braces), not valid YAML content.
+        String[] lines = result.split("\n");
+        int last = lines.length - 1;
+        while (last >= 0 && lines[last].trim().matches("[\"{}\\[\\]]+")
+               && !lines[last].trim().equals("{}")) {
+            last--;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i <= last; i++) {
+            if (i > 0) sb.append("\n");
+            sb.append(lines[i]);
+        }
+        result = sb.toString();
 
-        // Step 5: collapse multiple blank lines
+        // Step 5: remove trailing "}} or "} stuck to last YAML line
+        result = result.replaceAll("(\\{\\})[\"\\}]+$", "$1");
+        result = result.replaceAll("([^{])[\"\\}]{2,}$", "$1");
+
+        // Step 6: collapse multiple blank lines
         result = result.replaceAll("\n{3,}", "\n\n").trim();
 
         return result;

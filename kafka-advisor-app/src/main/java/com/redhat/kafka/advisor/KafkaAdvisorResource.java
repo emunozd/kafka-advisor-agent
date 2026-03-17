@@ -31,6 +31,9 @@ public class KafkaAdvisorResource {
                     defaultValue = "classpath:system-prompt.txt")
     String promptPath;
 
+    private static final java.util.Set<String> SUPPORTED_KINDS =
+        java.util.Set.of("Kafka", "KafkaTopic");
+
     @GET
     @Produces(MediaType.TEXT_HTML)
     public TemplateInstance index() {
@@ -43,6 +46,26 @@ public class KafkaAdvisorResource {
     @Produces(MediaType.APPLICATION_JSON)
     public jakarta.ws.rs.core.Response analyze(AnalyzeRequest request) {
         try {
+            // ── Detect kind ───────────────────────────────────────────
+            String detectedKind = detectKind(request.yaml());
+
+            // ── Validate kind ─────────────────────────────────────────
+            if (!SUPPORTED_KINDS.contains(detectedKind)) {
+                ObjectNode result = mapper.createObjectNode();
+                result.put("recommendations",
+                    "• This tool applies the Kafka Optimization Theorem to Kafka and KafkaTopic CRDs only.\n" +
+                    "• Detected kind: " + detectedKind + " — not supported in this version.\n" +
+                    "• For KafkaUser: review quotas (producerByteRate, consumerByteRate) and ACL scope manually.\n" +
+                    "• For KafkaMirrorMaker2: review tasksMax, replication.factor and sync intervals manually.\n" +
+                    "• Paste a Kafka or KafkaTopic CRD to get AI-powered optimization recommendations.");
+                result.put("yaml",
+                    "# kind: " + detectedKind + " is not supported.\n" +
+                    "# Supported kinds: Kafka, KafkaTopic\n" +
+                    "# Please paste a valid Kafka or KafkaTopic CRD.");
+                return jakarta.ws.rs.core.Response.ok(result).build();
+            }
+
+            // ── Call the model ────────────────────────────────────────
             String systemPrompt = loadSystemPrompt();
             String userMessage  = "Optimization goal: " + request.goal() +
                 "\n\nInput CRD YAML:\n" + request.yaml() +
@@ -55,8 +78,6 @@ public class KafkaAdvisorResource {
 
             Response<AiMessage> resp = chatModel.generate(sys, usr);
             String raw = resp.content().text().trim();
-
-            // Strip markdown fences
             raw = raw.replaceAll("(?s)```json\\s*", "").replaceAll("```", "").trim();
 
             ObjectNode result = mapper.createObjectNode();
@@ -67,15 +88,20 @@ public class KafkaAdvisorResource {
 
         } catch (Exception e) {
             ObjectNode err = mapper.createObjectNode();
-            err.put("error", e.getClass().getSimpleName() + ": " + e.getMessage());
             err.put("recommendations", "Backend error: " + e.getMessage());
             err.put("yaml", "# Error processing response");
             return jakarta.ws.rs.core.Response.ok(err).build();
         }
     }
 
+    private String detectKind(String yaml) {
+        Pattern p = Pattern.compile("^kind:\\s*(\\S+)", Pattern.MULTILINE);
+        Matcher m = p.matcher(yaml);
+        if (m.find()) return m.group(1).trim();
+        return "Unknown";
+    }
+
     private String extractRecommendations(String raw) {
-        // Try JSON parse first
         try {
             JsonNode json = mapper.readTree(raw);
             if (json.has("recommendations")) {
@@ -93,7 +119,6 @@ public class KafkaAdvisorResource {
             }
         } catch (Exception ignored) {}
 
-        // Fallback: extract bullet lines
         StringBuilder sb = new StringBuilder();
         for (String line : raw.split("\n")) {
             String t = line.trim();
@@ -106,38 +131,29 @@ public class KafkaAdvisorResource {
     }
 
     private String extractYaml(String raw) {
-        // Strategy 1: find apiVersion block anywhere in the text
         Pattern p = Pattern.compile(
             "(apiVersion:\\s*kafka\\.strimzi\\.io[\\s\\S]*)", Pattern.MULTILINE);
         Matcher m = p.matcher(raw);
         if (m.find()) {
-            String candidate = m.group(1);
-            // Remove trailing JSON closing chars
-            candidate = candidate.replaceAll("[}\"\\]]+\\s*$", "").trim();
-            // Unescape \n and \" from JSON string encoding
-            candidate = candidate.replace("\\n", "\n").replace("\\\"", "\"");
-            return candidate;
+            String candidate = m.group(1)
+                .replaceAll("[}\"\\]]+\\s*$", "").trim();
+            return candidate.replace("\\n", "\n").replace("\\\"", "\"");
         }
-
-        // Strategy 2: try JSON yaml field
         try {
             JsonNode json = mapper.readTree(raw);
             if (json.has("yaml")) {
-                String y = json.get("yaml").asText();
-                return y.replace("\\n", "\n").replace("\\\"", "\"");
+                return json.get("yaml").asText()
+                    .replace("\\n", "\n").replace("\\\"", "\"");
             }
         } catch (Exception ignored) {}
 
-        // Strategy 3: return everything after "yaml":
         int idx = raw.indexOf("\"yaml\":");
         if (idx >= 0) {
-            String after = raw.substring(idx + 7).trim();
-            // Strip leading quote/pipe
-            after = after.replaceAll("^[\"\\|\\s]+", "");
-            after = after.replace("\\n", "\n").replace("\\\"", "\"");
+            String after = raw.substring(idx + 7).trim()
+                .replaceAll("^[\"\\|\\s]+", "")
+                .replace("\\n", "\n").replace("\\\"", "\"");
             return after;
         }
-
         return "# Could not extract YAML.\n# See recommendations panel.";
     }
 

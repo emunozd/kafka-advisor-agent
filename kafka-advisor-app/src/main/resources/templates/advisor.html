@@ -23,6 +23,8 @@
   .panel-head { padding: 8px 12px; background: #f5f5f5; border-bottom: 1px solid #ddd;
     display: flex; justify-content: space-between; align-items: center; }
   .panel-label { font-size: 11px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.05em; }
+  .supported-badge { font-size: 11px; color: white; background: #cc0000;
+    border-radius: 4px; padding: 2px 8px; font-weight: 500; }
   textarea { width: 100%; height: 300px; border: none; outline: none; padding: 12px;
     font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.6; resize: none; }
   .output-area { width: 100%; height: 300px; padding: 12px; font-family: 'Courier New', monospace;
@@ -34,6 +36,7 @@
     margin-bottom: 1rem; overflow: hidden; }
   .recs-body { padding: 1rem; min-height: 80px; font-size: 14px; line-height: 1.8; white-space: pre-wrap; }
   .recs-body.empty { color: #aaa; font-size: 13px; }
+  .recs-body.unsupported { color: #cc0000; font-size: 13px; line-height: 1.8; white-space: pre-wrap; }
   .run-btn { width: 100%; padding: 12px; background: #cc0000; color: white; border: none;
     border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background 0.15s;
     display: flex; align-items: center; justify-content: center; gap: 8px; }
@@ -45,6 +48,9 @@
   .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.4);
     border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .kind-hint { font-size: 12px; color: #888; margin-bottom: 10px; line-height: 1.5; }
+  .kind-hint span { font-family: monospace; background: #f0f0f0; padding: 1px 6px;
+    border-radius: 4px; margin-right: 4px; }
   @media (max-width: 700px) { .editor-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -73,9 +79,15 @@
     <div class="panel">
       <div class="panel-head">
         <span class="panel-label">Input CRD YAML</span>
-        <span style="font-size:11px;color:#888;">Kafka / KafkaTopic / KafkaUser / KafkaMirrorMaker2</span>
+        <span class="supported-badge">Kafka &amp; KafkaTopic only</span>
       </div>
-      <textarea id="input-yaml" spellcheck="false" placeholder="# Paste your AMQ Streams CRD YAML here..."></textarea>
+      <p class="kind-hint" style="padding: 6px 12px 0; margin:0;">
+        Supported:
+        <span>kind: Kafka</span>
+        <span>kind: KafkaTopic</span>
+      </p>
+      <textarea id="input-yaml" spellcheck="false" placeholder="# Paste your Kafka or KafkaTopic CRD YAML here...
+# Other kinds (KafkaUser, KafkaMirrorMaker2) are not supported by this tool."></textarea>
     </div>
     <div class="panel">
       <div class="panel-head">
@@ -122,11 +134,18 @@ spec:
 document.getElementById('input-yaml').value = DEFAULT_YAML;
 let currentGoal = 'throughput';
 
+const SUPPORTED_KINDS = ['Kafka', 'KafkaTopic'];
+
 function setGoal(el) {
   document.querySelectorAll('.goal-btn').forEach(b => b.classList.remove('active'));
   el.classList.add('active');
   currentGoal = el.dataset.goal;
   document.getElementById('goal-tag').textContent = currentGoal;
+}
+
+function detectKind(yaml) {
+  const match = yaml.match(/^kind:\s*(\S+)/m);
+  return match ? match[1].trim() : 'Unknown';
 }
 
 function copyOutput() {
@@ -136,32 +155,47 @@ function copyOutput() {
   }
 }
 
-function setOutput(el, text, empty) {
-  if (empty) {
-    el.className = el.className.includes('output-area') ? 'output-area empty' : 'recs-body empty';
-    el.textContent = text;
-  } else {
-    el.className = el.className.includes('output-area') ? 'output-area' : 'recs-body';
-    // Replace escaped \n with real newlines
-    el.textContent = text.replace(/\\n/g, '\n');
+function setOutput(el, text, mode) {
+  el.className = el.className.replace(/\s*(empty|unsupported)/g, '');
+  if (mode === 'empty') {
+    el.className += ' empty';
+  } else if (mode === 'unsupported') {
+    el.className += ' unsupported';
   }
+  el.textContent = text.replace(/\\n/g, '\n');
 }
 
 async function runAgent() {
   const yaml = document.getElementById('input-yaml').value.trim();
   if (!yaml) return;
 
+  const recsEl  = document.getElementById('recs-area');
+  const outEl   = document.getElementById('output-yaml');
   const btn     = document.getElementById('run-btn');
   const spinner = document.getElementById('spinner');
   const label   = document.getElementById('btn-label');
-  const recsEl  = document.getElementById('recs-area');
-  const outEl   = document.getElementById('output-yaml');
+
+  // ── Client-side kind validation ───────────────────────────────
+  const kind = detectKind(yaml);
+  if (!SUPPORTED_KINDS.includes(kind)) {
+    setOutput(recsEl,
+      `• This tool applies the Kafka Optimization Theorem to Kafka and KafkaTopic CRDs only.\n` +
+      `• Detected kind: ${kind} — not supported in this version.\n` +
+      `• For KafkaUser: review quotas (producerByteRate, consumerByteRate) and ACL scope manually.\n` +
+      `• For KafkaMirrorMaker2: review tasksMax, replication.factor and sync intervals manually.\n` +
+      `• Paste a Kafka or KafkaTopic CRD to get AI-powered optimization recommendations.`,
+      'unsupported');
+    setOutput(outEl,
+      `# kind: ${kind} is not supported.\n# Supported kinds: Kafka, KafkaTopic\n# Please paste a valid Kafka or KafkaTopic CRD.`,
+      '');
+    return;
+  }
 
   btn.disabled = true;
   spinner.style.display = 'block';
   label.textContent = 'Analyzing...';
-  setOutput(recsEl, 'Agent is thinking...', true);
-  setOutput(outEl,  'Generating optimized YAML...', true);
+  setOutput(recsEl, 'Agent is thinking...', 'empty');
+  setOutput(outEl,  'Generating optimized YAML...', 'empty');
 
   try {
     const resp = await fetch('/analyze', {
@@ -173,15 +207,15 @@ async function runAgent() {
     const data = await resp.json();
 
     if (data.recommendations && data.yaml) {
-      setOutput(recsEl, data.recommendations, false);
-      setOutput(outEl,  data.yaml, false);
+      setOutput(recsEl, data.recommendations, '');
+      setOutput(outEl,  data.yaml, '');
     } else if (data.error) {
-      setOutput(recsEl, 'Error: ' + data.error, false);
-      setOutput(outEl,  'Request failed.', true);
+      setOutput(recsEl, 'Error: ' + data.error, 'unsupported');
+      setOutput(outEl,  'Request failed.', 'empty');
     }
   } catch(e) {
-    setOutput(recsEl, 'Network error: ' + e.message, false);
-    setOutput(outEl,  'Request failed.', true);
+    setOutput(recsEl, 'Network error: ' + e.message, 'unsupported');
+    setOutput(outEl,  'Request failed.', 'empty');
   }
 
   btn.disabled = false;

@@ -2,22 +2,23 @@ package com.redhat.kafka.advisor;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
-import dev.langchain4j.model.input.Prompt;
-import dev.langchain4j.model.input.PromptTemplate;
+import dev.langchain4j.model.output.Response;
 import io.quarkus.qute.Template;
 import io.quarkus.qute.TemplateInstance;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response.Status;
+
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Map;
-import java.util.Optional;
 
 @Path("/")
 public class KafkaAdvisorResource {
@@ -45,7 +46,7 @@ public class KafkaAdvisorResource {
     @Path("/analyze")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response analyze(AnalyzeRequest request) {
+    public jakarta.ws.rs.core.Response analyze(AnalyzeRequest request) {
         try {
             String systemPrompt = loadSystemPrompt();
 
@@ -60,21 +61,43 @@ public class KafkaAdvisorResource {
             dev.langchain4j.data.message.UserMessage usr =
                 dev.langchain4j.data.message.UserMessage.from(userMessage);
 
-            dev.langchain4j.model.output.Response<dev.langchain4j.data.message.AiMessage> resp =
-                chatModel.generate(sys, usr);
-
+            Response<AiMessage> resp = chatModel.generate(sys, usr);
             String raw = resp.content().text().trim();
 
             // Strip markdown fences if model adds them
-            if (raw.startsWith("```")) {
-                raw = raw.replaceAll("```json\\n?|```\\n?", "").trim();
+            raw = raw.replaceAll("(?s)```json\\s*", "").replaceAll("```", "").trim();
+
+            // Try to parse as JSON
+            JsonNode json;
+            try {
+                json = mapper.readTree(raw);
+            } catch (Exception parseEx) {
+                // Model returned malformed JSON — wrap it as plain text
+                ObjectNode fallback = mapper.createObjectNode();
+                fallback.put("recommendations", raw);
+                fallback.put("yaml", "# Could not parse optimized YAML from model response.\n" +
+                                     "# Raw response saved in recommendations panel.");
+                return jakarta.ws.rs.core.Response.ok(fallback).build();
             }
 
-            JsonNode json = mapper.readTree(raw);
-            return Response.ok(json).build();
+            // Normalize: if recommendations is an array, join into string
+            if (json.has("recommendations") && json.get("recommendations").isArray()) {
+                StringBuilder sb = new StringBuilder();
+                for (JsonNode item : json.get("recommendations")) {
+                    String line = item.asText().trim();
+                    if (!line.startsWith("•") && !line.startsWith("-")) {
+                        sb.append("• ");
+                    }
+                    sb.append(line).append("\n");
+                }
+                ((ObjectNode) json).put("recommendations", sb.toString().trim());
+            }
+
+            return jakarta.ws.rs.core.Response.ok(json).build();
 
         } catch (Exception e) {
-            return Response.serverError()
+            return jakarta.ws.rs.core.Response
+                .status(Status.INTERNAL_SERVER_ERROR)
                 .entity(Map.of("error", e.getMessage()))
                 .build();
         }
@@ -85,7 +108,6 @@ public class KafkaAdvisorResource {
         if (Files.exists(path)) {
             return Files.readString(path);
         }
-        // Fallback to classpath (dev mode)
         try (var is = getClass().getResourceAsStream("/system-prompt.txt")) {
             if (is != null) return new String(is.readAllBytes());
         }

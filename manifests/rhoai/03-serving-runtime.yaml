@@ -25,6 +25,7 @@ spec:
         - "--tensor-parallel-size=1"
         - "--port=8080"
         - "--served-model-name=llama32-3b-instruct-fp8"
+        - "--gpu-memory-utilization=0.85"
       env:
         - name: HF_HOME
           value: /tmp/hf_cache

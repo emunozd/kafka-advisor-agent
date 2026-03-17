@@ -139,7 +139,11 @@ public class KafkaAdvisorResource {
             "(apiVersion:\\s*kafka\\.strimzi\\.io[\\s\\S]*)", Pattern.MULTILINE);
         Matcher m = p.matcher(raw);
         if (m.find()) {
-            return cleanYaml(m.group(1).replaceAll("[}\"\\]]+\\s*$", "").trim());
+            String candidate = m.group(1);
+            // Only strip trailing JSON wrapper chars that are NOT part of YAML
+            // i.e. a lone " or }} at the very end after a newline
+            candidate = candidate.replaceAll("\n[\"\\}\\]]+\\s*$", "").trim();
+            return cleanYaml(candidate);
         }
 
         // Strategy 3: extract after "yaml":
@@ -154,22 +158,37 @@ public class KafkaAdvisorResource {
     }
 
     private String cleanYaml(String raw) {
-        return raw
-            // Fix: "metadata:\  name:" → "metadata:\n  name:"
-            // Model sometimes emits \<space> instead of \n<space>
+        String result = raw
+            // Fix: backslash+spaces used instead of \n+spaces by the model
             .replaceAll("\\\\([ ]{1,8})", "\n$1")
-            // Standard JSON unescaping
+            // Standard JSON string unescaping
             .replace("\\n", "\n")
             .replace("\\\"", "\"")
             .replace("\\t", "  ")
-            // Remove trailing JSON closing chars
-            .replaceAll("[}\"\\]]+\\s*$", "")
-            // Remove isolated backslashes at end of line
+            // Remove isolated trailing backslashes at end of a line
             .replaceAll("\\\\\\s*\n", "\n")
-            .replaceAll("\\\\$", "")
-            // Collapse multiple blank lines
+            .replaceAll("\\\\\\s*$", "")
+            // Collapse 3+ consecutive blank lines into one
             .replaceAll("\n{3,}", "\n\n")
             .trim();
+
+        // Strip trailing JSON-only closing chars ONLY if the last line
+        // is purely made of }, ", ] characters (not a valid YAML line)
+        String[] lines = result.split("\n");
+        int lastIdx = lines.length - 1;
+        while (lastIdx >= 0 && lines[lastIdx].trim().matches("[}\"\\]]+")) {
+            lastIdx--;
+        }
+        if (lastIdx < lines.length - 1) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i <= lastIdx; i++) {
+                sb.append(lines[i]);
+                if (i < lastIdx) sb.append("\n");
+            }
+            return sb.toString().trim();
+        }
+
+        return result;
     }
 
     private String loadSystemPrompt() throws IOException {
